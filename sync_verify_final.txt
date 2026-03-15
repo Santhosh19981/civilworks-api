@@ -1,0 +1,7 @@
+--- VERIFICATION SCRIPT START ---
+Connecting to civilworks_prod...
+Connected successfully.
+SUCCESS: rental_categories table exists.
+Rental Categories Count: 4
+Rentals Count: 5
+--- VERIFICATION END ---
