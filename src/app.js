@@ -10,26 +10,29 @@ const healthRoutes = require('./routes/health.routes');
 
 const app = express();
 
+// Enable CORS
+app.use(cors({
+    origin: [
+        'https://civilworks.in', 
+        'https://admin.civilworks.in',
+        'https://qa.civilworks.in',
+        'https://qa-admin.civilworks.in',
+        'http://localhost:4200',
+        'http://localhost:4201'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    optionsSuccessStatus: 200
+}));
+
+// CORS middleware already handles OPTIONS requests
+
 // Set security HTTP headers
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginOpenerPolicy: { policy: "unsafe-none" }
 }));
-
-// Enable CORS
-const allowedOrigins = [
-    config.app.frontendUrl,
-    config.app.adminUrl,
-];
-
-app.use(cors({
-    origin: allowedOrigins,
-    credentials: true,
-    optionsSuccessStatus: 200
-}));
-
-// Handle pre-flight requests
-app.options(/.*/, cors());
 
 // Development logging
 if (config.app.env === 'development') {
@@ -59,6 +62,8 @@ app.use('/api/v1/orders', require('./routes/order.routes'));
 app.use('/api/v1/users', require('./routes/user.routes'));
 app.use('/api/v1/employees', require('./routes/employee.routes'));
 app.use('/api/v1/dashboard', require('./routes/dashboard.routes'));
+app.use('/api/v1/home-services', require('./routes/home-service.routes'));
+app.use('/api/v1/home-sections', require('./routes/home-section.routes'));
 app.use('/api/v1', require('./routes/common.routes'));
 app.use('/api/v1', healthRoutes);
 

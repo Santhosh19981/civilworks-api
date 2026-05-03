@@ -9,6 +9,7 @@ router.use(protect, restrictTo('customer'));
 
 router.get('/', cartController.getCart);
 router.post('/', cartController.addToCart);
+router.post('/sync', cartController.syncCart);
 router.put('/:id', cartController.updateQuantity);
 router.delete('/:id', cartController.removeItem);
 

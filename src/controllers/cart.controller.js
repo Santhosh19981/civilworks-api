@@ -89,6 +89,38 @@ class CartController {
             next(error);
         }
     };
+
+    /**
+     * Sync Cart (Guest to Server)
+     */
+    syncCart = async (req, res, next) => {
+        try {
+            const { items } = req.body;
+            if (!items || !Array.isArray(items)) return next(new AppError('Items array is required', 400));
+
+            for (const item of items) {
+                const { product_id, quantity } = item;
+                if (!product_id) continue;
+
+                const existingItem = await cartRepository.findItem(req.user.id, product_id);
+                if (existingItem) {
+                    await cartRepository.updateQuantity(existingItem.id, req.user.id, existingItem.quantity + (quantity || 1));
+                } else {
+                    await cartRepository.addItem(req.user.id, product_id, quantity || 1);
+                }
+            }
+
+            const cartItems = await cartRepository.findByUserId(req.user.id);
+            let subtotal = 0;
+            cartItems.forEach(item => {
+                subtotal += item.price * item.quantity;
+            });
+
+            sendSuccess(res, 'Cart synced successfully', { items: cartItems, subtotal });
+        } catch (error) {
+            next(error);
+        }
+    };
 }
 
 module.exports = new CartController();
