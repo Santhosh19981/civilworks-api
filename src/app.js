@@ -63,6 +63,7 @@ app.use('/api/v1/users', require('./routes/user.routes'));
 app.use('/api/v1/employees', require('./routes/employee.routes'));
 app.use('/api/v1/dashboard', require('./routes/dashboard.routes'));
 app.use('/api/v1/home-services', require('./routes/home-service.routes'));
+console.log('Registering home-sections routes...');
 app.use('/api/v1/home-sections', require('./routes/home-section.routes'));
 app.use('/api/v1', require('./routes/common.routes'));
 app.use('/api/v1', healthRoutes);
