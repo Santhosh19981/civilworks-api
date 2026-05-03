@@ -23,7 +23,7 @@ class HomeSectionRepository {
                 END as name,
                 CASE 
                     WHEN hsi.item_type = 'product' THEN p.price 
-                    WHEN hsi.item_type = 'rental' THEN r.pricePerDay 
+                    WHEN hsi.item_type = 'rental' THEN r.price_per_day 
                 END as price,
                 CASE 
                     WHEN hsi.item_type = 'product' THEN p.image 
