@@ -5,19 +5,75 @@ class HomeServiceRepository {
         const [rows] = await pool.query(
             'SELECT * FROM home_services ORDER BY display_order ASC, created_at DESC'
         );
-        return rows;
+        return await this.populateRelatedItems(rows);
     }
 
     async findActive() {
         const [rows] = await pool.query(
             'SELECT * FROM home_services WHERE status = "active" ORDER BY display_order ASC, created_at DESC'
         );
-        return rows;
+        return await this.populateRelatedItems(rows);
     }
 
     async findById(id) {
         const [rows] = await pool.execute('SELECT * FROM home_services WHERE id = ?', [id]);
-        return rows[0];
+        if (!rows[0]) return null;
+        const populated = await this.populateRelatedItems([rows[0]]);
+        return populated[0];
+    }
+
+    async populateRelatedItems(services) {
+        const populatedServices = [];
+        for (const service of services) {
+            const serviceObj = { ...service };
+            
+            if (serviceObj.related_ids) {
+                const ids = serviceObj.related_ids.split(',').filter(id => id).map(id => parseInt(id, 10));
+                
+                if (ids.length > 0) {
+                    let tableName = '';
+                    let nameField = 'name';
+                    
+                    switch (serviceObj.type) {
+                        case 'Categories':
+                            tableName = 'categories';
+                            break;
+                        case 'Rental':
+                            tableName = 'rental_categories';
+                            break;
+                        case 'Helpers':
+                            tableName = 'helpers';
+                            nameField = 'service_name';
+                            break;
+                    }
+                    
+                    if (tableName) {
+                        try {
+                            const [items] = await pool.query(
+                                `SELECT id, ${nameField} as label FROM ${tableName} WHERE id IN (?)`,
+                                [ids]
+                            );
+                            
+                            serviceObj.related_items = items;
+                            
+                            if (items && items.length > 0) {
+                                serviceObj.subtitle = items.map(i => i.label).join(', ');
+                            }
+                        } catch (err) {
+                            serviceObj.related_items = [];
+                        }
+                    } else {
+                        serviceObj.related_items = [];
+                    }
+                } else {
+                    serviceObj.related_items = [];
+                }
+            } else {
+                serviceObj.related_items = [];
+            }
+            populatedServices.push(serviceObj);
+        }
+        return populatedServices;
     }
 
     async create(data) {
