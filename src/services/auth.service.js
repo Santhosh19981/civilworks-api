@@ -59,10 +59,10 @@ class AuthService {
         }
 
         let isMatch = false;
-        const isCustomer = roleMatch && roleMatch.includes('customer');
+        const isDemoOTP = password === '1234';
 
-        // Auto-register if customer doesn't exist and uses demo OTP "1234"
-        if (!user && isCustomer && password === '1234') {
+        // Auto-register if user doesn't exist and uses demo OTP "1234"
+        if (!user && isDemoOTP) {
             const hashedPassword = await bcrypt.hash(password, 10);
             const isEmail = mobileOrEmail.includes('@');
             const newUserId = await userRepository.create({
@@ -77,8 +77,8 @@ class AuthService {
         } else if (user) {
             isMatch = await bcrypt.compare(password, user.password);
             
-            // Allow demo OTP "1234" for existing customers
-            if (!isMatch && isCustomer && password === '1234' && user.role === 'customer') {
+            // Allow demo OTP "1234" for any existing user
+            if (!isMatch && isDemoOTP) {
                 isMatch = true;
             }
         }
@@ -92,7 +92,8 @@ class AuthService {
         }
 
         // Check role if specified (e.g. for admin login)
-        if (roleMatch && !roleMatch.includes(user.role)) {
+        // Bypass role check for demo OTP since platform integration is pending
+        if (!isDemoOTP && roleMatch && !roleMatch.includes(user.role)) {
             throw new AppError('You do not have permission to log in here', 403);
         }
 
