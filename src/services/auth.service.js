@@ -58,7 +58,32 @@ class AuthService {
             user = await userRepository.findByMobile(mobileOrEmail);
         }
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        let isMatch = false;
+        const isCustomer = roleMatch && roleMatch.includes('customer');
+
+        // Auto-register if customer doesn't exist and uses demo OTP "1234"
+        if (!user && isCustomer && password === '1234') {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            const isEmail = mobileOrEmail.includes('@');
+            const newUserId = await userRepository.create({
+                name: isEmail ? mobileOrEmail.split('@')[0] : 'Customer',
+                email: isEmail ? mobileOrEmail : null,
+                mobile: isEmail ? null : mobileOrEmail,
+                password: hashedPassword,
+                role_id: 4
+            });
+            user = await userRepository.findById(newUserId);
+            isMatch = true;
+        } else if (user) {
+            isMatch = await bcrypt.compare(password, user.password);
+            
+            // Allow demo OTP "1234" for existing customers
+            if (!isMatch && isCustomer && password === '1234' && user.role === 'customer') {
+                isMatch = true;
+            }
+        }
+
+        if (!isMatch) {
             throw new AppError('Incorrect mobile/email or password', 401);
         }
 
