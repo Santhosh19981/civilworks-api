@@ -3,22 +3,22 @@ const { pool } = require('../config/db.config');
 class OrderRepository {
     async createOrder(orderData, connection = null) {
         const executor = connection || pool;
-        const { order_no, user_id, address_id, subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes } = orderData;
+        const { order_no, user_id, address_id, order_type = 'product', subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes } = orderData;
 
         const [result] = await executor.execute(
-            'INSERT INTO orders (order_no, user_id, address_id, subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [order_no, user_id, address_id, subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes]
+            'INSERT INTO orders (order_no, user_id, address_id, order_type, subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [order_no, user_id, address_id, order_type, subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes]
         );
         return result.insertId;
     }
 
     async createOrderItem(itemData, connection = null) {
         const executor = connection || pool;
-        const { order_id, product_id, quantity, price } = itemData;
+        const { order_id, product_id = null, service_id = null, rental_id = null, helper_id = null, quantity, price } = itemData;
 
         await executor.execute(
-            'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
-            [order_id, product_id, quantity, price]
+            'INSERT INTO order_items (order_id, product_id, service_id, rental_id, helper_id, quantity, price) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [order_id, product_id, service_id, rental_id, helper_id, quantity, price]
         );
     }
 
@@ -77,10 +77,18 @@ class OrderRepository {
     }
 
     async findItemsByOrderId(orderId) {
-        const [rows] = await pool.execute(
-            'SELECT oi.*, p.name as product_name, p.image FROM order_items oi JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?',
-            [orderId]
-        );
+        const query = `
+            SELECT oi.*, 
+                   COALESCE(p.name, hs.title, r.name, h.name) as product_name, 
+                   COALESCE(p.image, hs.image, r.image, h.image) as image
+            FROM order_items oi 
+            LEFT JOIN products p ON oi.product_id = p.id 
+            LEFT JOIN home_services hs ON oi.service_id = hs.id
+            LEFT JOIN rentals r ON oi.rental_id = r.id
+            LEFT JOIN helpers h ON oi.helper_id = h.id
+            WHERE oi.order_id = ?
+        `;
+        const [rows] = await pool.execute(query, [orderId]);
         return rows;
     }
 

@@ -15,64 +15,79 @@ class OrderController {
         await connection.beginTransaction();
 
         try {
-            const { address_id, payment_method, notes } = req.body;
-            if (!address_id || !payment_method) {
-                return next(new AppError('Address and payment method are required', 400));
+            let { address_id, address, payment_method, notes, order_type = 'product', item_id, quantity = 1, price = 0 } = req.body;
+            if (!payment_method) {
+                return next(new AppError('Payment method is required', 400));
             }
 
-            // 1. Get Cart Items
-            const cartItems = await cartRepository.findByUserId(req.user.id);
-            if (cartItems.length === 0) {
-                return next(new AppError('Cart is empty', 400));
+            // Handle address object
+            if (!address_id && address && typeof address === 'object') {
+                const addressData = {
+                    user_id: req.user.id,
+                    full_name: address.name || req.user.name,
+                    mobile: address.phone,
+                    address_line_1: address.addressLine1,
+                    address_line_2: address.addressLine2,
+                    city: address.city,
+                    state: address.state,
+                    pincode: address.pincode,
+                    is_default: false
+                };
+                
+                const [result] = await connection.execute(
+                    'INSERT INTO addresses (user_id, full_name, mobile, address_line_1, address_line_2, city, state, pincode, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [addressData.user_id, addressData.full_name, addressData.mobile, addressData.address_line_1, addressData.address_line_2, addressData.city, addressData.state, addressData.pincode, 0]
+                );
+                address_id = result.insertId;
             }
 
-            // 2. Calculate Totals and Check Stock
+            let itemsToOrder = [];
             let subtotal = 0;
-            for (const item of cartItems) {
-                if (item.stock < item.quantity) {
-                    throw new AppError(`Insufficient stock for ${item.name}`, 400);
+
+            if (order_type === 'product') {
+                if (!address_id) return next(new AppError('Address is required for product orders', 400));
+                
+                const cartItems = await cartRepository.findByUserId(req.user.id);
+                if (cartItems.length === 0) return next(new AppError('Cart is empty', 400));
+
+                for (const item of cartItems) {
+                    if (item.stock < item.quantity) {
+                        throw new AppError(`Insufficient stock for ${item.name}`, 400);
+                    }
+                    subtotal += item.price * item.quantity;
+                    itemsToOrder.push({ product_id: item.product_id, quantity: item.quantity, price: item.price });
                 }
-                subtotal += item.price * item.quantity;
+            } else {
+                if (!item_id) return next(new AppError('Item ID is required', 400));
+                subtotal = price * quantity;
+                let itemData = { quantity, price };
+                if (order_type === 'service') itemData.service_id = item_id;
+                else if (order_type === 'rental') itemData.rental_id = item_id;
+                else if (order_type === 'helper') itemData.helper_id = item_id;
+                itemsToOrder.push(itemData);
             }
 
-            // Placeholder for real tax/delivery logic from settings
             const tax_amount = subtotal * 0.18; // 18% tax
             const delivery_charge = subtotal > 1000 ? 0 : 50;
             const total_amount = subtotal + tax_amount + delivery_charge;
-
             const order_no = `ORD-${Date.now()}`;
 
-            // 3. Create Order
             const orderId = await orderRepository.createOrder({
-                order_no,
-                user_id: req.user.id,
-                address_id,
-                subtotal,
-                tax_amount,
-                delivery_charge,
-                total_amount,
-                payment_method,
-                notes
+                order_no, user_id: req.user.id, address_id: address_id || null, order_type,
+                subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes
             }, connection);
 
-            // 4. Create Order Items & Update Stock
-            for (const item of cartItems) {
-                await orderRepository.createOrderItem({
-                    order_id: orderId,
-                    product_id: item.product_id,
-                    quantity: item.quantity,
-                    price: item.price
-                }, connection);
-
-                // Update Stock
-                await connection.execute(
-                    'UPDATE products SET stock = stock - ? WHERE id = ?',
-                    [item.quantity, item.product_id]
-                );
+            for (const item of itemsToOrder) {
+                await orderRepository.createOrderItem({ order_id: orderId, ...item }, connection);
+                
+                if (order_type === 'product' && item.product_id) {
+                    await connection.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.product_id]);
+                }
             }
 
-            // 5. Clear Cart
-            await connection.execute('DELETE FROM cart_items WHERE user_id = ?', [req.user.id]);
+            if (order_type === 'product') {
+                await connection.execute('DELETE FROM cart_items WHERE user_id = ?', [req.user.id]);
+            }
 
             await connection.commit();
 
@@ -96,10 +111,10 @@ class OrderController {
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 10;
             
-            // Note: Updated OrderRepository.findByUserId to support pagination if needed, 
-            // but for now I'll use findAll with user_id filter if I update the repository further.
-            // Actually, let's update findByUserId in repository first or use findAll with filters.
             const orders = await orderRepository.findByUserId(req.user.id);
+            for (let order of orders) {
+                order.items = await orderRepository.findItemsByOrderId(order.id);
+            }
             sendSuccess(res, 'Orders retrieved successfully', orders);
         } catch (error) {
             next(error);

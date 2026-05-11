@@ -58,18 +58,24 @@ class HomeServiceRepository {
                             
                             if (items && items.length > 0) {
                                 serviceObj.subtitle = items.map(i => i.label).join(', ');
+                            } else {
+                                serviceObj.subtitle = ''; // Clear subtitle if linked items not found
                             }
                         } catch (err) {
                             serviceObj.related_items = [];
+                            serviceObj.subtitle = ''; // Clear subtitle on error
                         }
                     } else {
                         serviceObj.related_items = [];
+                        serviceObj.subtitle = ''; // Clear subtitle if type mismatch
                     }
                 } else {
                     serviceObj.related_items = [];
+                    serviceObj.subtitle = ''; // Clear subtitle if related_ids is empty
                 }
             } else {
                 serviceObj.related_items = [];
+                serviceObj.subtitle = ''; // Clear subtitle if no related_ids field
             }
             populatedServices.push(serviceObj);
         }
