@@ -79,7 +79,7 @@ class OrderRepository {
     async findItemsByOrderId(orderId) {
         const query = `
             SELECT oi.*, 
-                   COALESCE(p.name, hs.title, r.name, h.name) as product_name, 
+                   COALESCE(p.name, hs.title, r.name, h.service_name) as product_name, 
                    COALESCE(p.image, hs.image, r.image, h.image) as image
             FROM order_items oi 
             LEFT JOIN products p ON oi.product_id = p.id 
