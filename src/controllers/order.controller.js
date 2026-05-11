@@ -74,7 +74,7 @@ class OrderController {
 
             const orderId = await orderRepository.createOrder({
                 order_no, user_id: req.user.id, address_id: address_id || null, order_type,
-                subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes
+                subtotal, tax_amount, delivery_charge, total_amount, payment_method, notes: notes || null
             }, connection);
 
             for (const item of itemsToOrder) {
