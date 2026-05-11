@@ -58,7 +58,14 @@ const protect = async (req, res, next) => {
  */
 const restrictTo = (...roles) => {
     return (req, res, next) => {
-        if (!roles.includes(req.user.role)) {
+        let isAuthorized = roles.includes(req.user.role);
+        
+        // Temporarily allow employees to test customer flows
+        if (!isAuthorized && roles.includes('customer') && ['manager', 'admin', 'super_admin'].includes(req.user.role)) {
+            isAuthorized = true;
+        }
+
+        if (!isAuthorized) {
             return next(new AppError('You do not have permission to perform this action', 403));
         }
         next();
