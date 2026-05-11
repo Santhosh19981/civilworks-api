@@ -80,7 +80,7 @@ class OrderRepository {
         const query = `
             SELECT oi.*, 
                    COALESCE(p.name, hs.title, r.name, h.service_name) as product_name, 
-                   COALESCE(p.image, hs.image, r.image, h.image) as image
+                   COALESCE(p.image, hs.icon, r.image, h.image) as image
             FROM order_items oi 
             LEFT JOIN products p ON oi.product_id = p.id 
             LEFT JOIN home_services hs ON oi.service_id = hs.id
