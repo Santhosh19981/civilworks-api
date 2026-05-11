@@ -47,7 +47,9 @@ class OrderController {
             if (order_type === 'product') {
                 if (!address_id) return next(new AppError('Address is required for product orders', 400));
                 
+                console.log('[DEBUG] placeOrder - req.user.id:', req.user.id, 'role:', req.user.role);
                 const cartItems = await cartRepository.findByUserId(req.user.id);
+                console.log('[DEBUG] cartItems found:', cartItems.length, cartItems);
                 if (cartItems.length === 0) return next(new AppError('Cart is empty', 400));
 
                 for (const item of cartItems) {
