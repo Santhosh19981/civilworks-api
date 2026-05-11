@@ -78,8 +78,8 @@ async function run() {
         for (const prod of sub.products) {
           const slug = prod.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
           await connection.query(
-            'INSERT INTO products (category_id, subcategory_id, name, slug, price, description) VALUES (?, ?, ?, ?, ?, ?)',
-            [catId, subId, prod, slug, 100.00, `Description for ${prod}`]
+            'INSERT INTO products (category_id, subcategory_id, name, slug, price, description, stock) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [catId, subId, prod, slug, 100.00, `Description for ${prod}`, 1000]
           );
         }
       }
