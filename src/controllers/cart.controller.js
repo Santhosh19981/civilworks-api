@@ -4,6 +4,24 @@ const { sendSuccess } = require('../utils/response.helper');
 const { AppError } = require('../middlewares/error.middleware');
 
 class CartController {
+    formatCartItems(cartItems) {
+        return cartItems.map(item => ({
+            id: item.id,
+            user_id: item.user_id,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+            product: {
+                id: item.product_id,
+                name: item.name,
+                price: item.price,
+                image: item.image,
+                stock: item.stock
+            }
+        }));
+    }
+
     /**
      * Get User Cart
      */
@@ -15,7 +33,7 @@ class CartController {
                 subtotal += item.price * item.quantity;
             });
 
-            sendSuccess(res, 'Cart retrieved successfully', { items: cartItems, subtotal });
+            sendSuccess(res, 'Cart retrieved successfully', { items: this.formatCartItems(cartItems), subtotal });
         } catch (error) {
             next(error);
         }
@@ -44,9 +62,10 @@ class CartController {
             } else {
                 await cartRepository.addItem(req.user.id, product_id, quantity || 1);
             }
-
             const cartItems = await cartRepository.findByUserId(req.user.id);
-            sendSuccess(res, 'Item added to cart', cartItems);
+            let subtotal = 0;
+            cartItems.forEach(item => subtotal += item.price * item.quantity);
+            sendSuccess(res, 'Item added to cart', { items: this.formatCartItems(cartItems), subtotal });
         } catch (error) {
             next(error);
         }
@@ -69,7 +88,9 @@ class CartController {
 
             await cartRepository.updateQuantity(req.params.id, req.user.id, quantity);
             const cartItems = await cartRepository.findByUserId(req.user.id);
-            sendSuccess(res, 'Cart updated', cartItems);
+            let subtotal = 0;
+            cartItems.forEach(item => subtotal += item.price * item.quantity);
+            sendSuccess(res, 'Cart updated', { items: this.formatCartItems(cartItems), subtotal });
         } catch (error) {
             next(error);
         }
@@ -84,7 +105,9 @@ class CartController {
             if (!success) return next(new AppError('Cart item not found', 404));
 
             const cartItems = await cartRepository.findByUserId(req.user.id);
-            sendSuccess(res, 'Item removed from cart', cartItems);
+            let subtotal = 0;
+            cartItems.forEach(item => subtotal += item.price * item.quantity);
+            sendSuccess(res, 'Item removed from cart', { items: this.formatCartItems(cartItems), subtotal });
         } catch (error) {
             next(error);
         }
@@ -116,7 +139,7 @@ class CartController {
                 subtotal += item.price * item.quantity;
             });
 
-            sendSuccess(res, 'Cart synced successfully', { items: cartItems, subtotal });
+            sendSuccess(res, 'Cart synced successfully', { items: this.formatCartItems(cartItems), subtotal });
         } catch (error) {
             next(error);
         }
