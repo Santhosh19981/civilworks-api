@@ -33,13 +33,18 @@ class OrderRepository {
     async findAll(filters = {}, page = 1, limit = 10) {
         const offset = (page - 1) * limit;
         let query = 'SELECT o.*, u.name as user_name FROM orders o JOIN users u ON o.user_id = u.id';
-        let countQuery = 'SELECT COUNT(*) as total FROM orders o';
+        let countQuery = 'SELECT COUNT(*) as total FROM orders o JOIN users u ON o.user_id = u.id';
         const params = [];
         const conditions = [];
 
         if (filters.status) {
             conditions.push('o.order_status = ?');
             params.push(filters.status);
+        }
+
+        if (filters.search) {
+            conditions.push('(o.order_no LIKE ? OR u.name LIKE ?)');
+            params.push(`%${filters.search}%`, `%${filters.search}%`);
         }
 
         if (conditions.length > 0) {

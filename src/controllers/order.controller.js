@@ -47,9 +47,7 @@ class OrderController {
             if (order_type === 'product') {
                 if (!address_id) return next(new AppError('Address is required for product orders', 400));
                 
-                console.log('[DEBUG] placeOrder - req.user.id:', req.user.id, 'role:', req.user.role);
                 const cartItems = await cartRepository.findByUserId(req.user.id);
-                console.log('[DEBUG] cartItems found:', cartItems.length, cartItems);
                 if (cartItems.length === 0) return next(new AppError('Cart is empty', 400));
 
                 for (const item of cartItems) {
@@ -72,7 +70,8 @@ class OrderController {
             const tax_amount = subtotal * 0.18; // 18% tax
             const delivery_charge = subtotal > 1000 ? 0 : 50;
             const total_amount = subtotal + tax_amount + delivery_charge;
-            const order_no = `ORD-${Date.now()}`;
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            const order_no = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 
             const orderId = await orderRepository.createOrder({
                 order_no, user_id: req.user.id, address_id: address_id || null, order_type,
