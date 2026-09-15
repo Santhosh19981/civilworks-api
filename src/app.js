@@ -13,6 +13,11 @@ const app = express();
 // Enable CORS
 app.use(cors({
     origin: [
+        'https://inframart.app',
+        'https://www.inframart.app',
+        'https://admin.inframart.app',
+        'https://qa.inframart.app',
+        'https://qa-admin.inframart.app',
         'https://civilworks.in', 
         'https://admin.civilworks.in',
         'https://qa.civilworks.in',
