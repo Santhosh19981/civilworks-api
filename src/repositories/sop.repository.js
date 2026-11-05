@@ -100,19 +100,16 @@ class SOPRepository {
         `;
         const serviceParams = [order.id];
 
-        // VENDOR ISOLATION: A vendor only sees services assigned to their vendor_id
-        if (isVendor && !isAdmin) {
-            serviceQuery += ` AND os.vendor_id = ?`;
-            serviceParams.push(vendorId);
-        }
-
         serviceQuery += ` ORDER BY os.sequence_order ASC, os.id ASC`;
 
         const [services] = await pool.execute(serviceQuery, serviceParams);
 
-        if (isVendor && !isAdmin && services.length === 0) {
-            // Vendor has no assigned services in this order
-            return null;
+        if (isVendor && !isAdmin) {
+            // Check that vendor has at least one assigned service in this order
+            const hasAssignedService = services.some(s => s.vendor_id == vendorId);
+            if (!hasAssignedService) {
+                return null;
+            }
         }
 
         // Fetch subtasks, proof images, and completion requests for all retrieved services

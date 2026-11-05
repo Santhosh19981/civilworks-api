@@ -192,14 +192,47 @@ class SOPController {
                     order_id: service.order_id,
                     subtask
                 });
+            }
 
-                // If subtask ends today and has next vendor, trigger notification immediately
-                if (subtask.end_date && subtask.next_vendor_id) {
-                    const todayStr = new Date().toISOString().slice(0, 10);
-                    const endDateStr = new Date(subtask.end_date).toISOString().slice(0, 10);
-                    if (todayStr === endDateStr) {
-                        sopRepository.notifyDueSubtaskVendors(io).catch(err => console.error('Auto notify error:', err));
+            // Trigger handover notification to next vendor immediately whenever next_vendor_id is provided
+            if (resolvedNextVendorId) {
+                try {
+                    const [targetSvcRows] = next_order_service_id
+                        ? await pool.execute('SELECT os.service_name, sc.name as subcat_name FROM order_services os LEFT JOIN subcategories sc ON os.subcategory_id = sc.id WHERE os.id = ?', [next_order_service_id])
+                        : [[]];
+                    const targetSvcName = targetSvcRows[0]?.service_name || targetSvcRows[0]?.subcat_name || 'your assigned trade';
+                    const notifTitle = `Process Progress Alert: Order #${service.order_id}`;
+                    const notifMsg = `the before process is completing soon , you order is on ${subtask.end_date ? new Date(subtask.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'the upcoming schedule'}`;
+
+                    const notifId = await notificationRepository.create({
+                        vendor_id: resolvedNextVendorId,
+                        target_type: 'vendor',
+                        order_id: service.order_id,
+                        service_id: next_order_service_id || null,
+                        title: notifTitle,
+                        message: notifMsg,
+                        type: 'order_progress_alert'
+                    });
+
+                    if (io) {
+                        const notifPayload = {
+                            id: notifId,
+                            order_id: service.order_id,
+                            service_id: next_order_service_id,
+                            service_name: targetSvcName,
+                            title: notifTitle,
+                            message: notifMsg,
+                            type: 'order_progress_alert',
+                            vendor_id: resolvedNextVendorId,
+                            is_read: false,
+                            created_at: new Date()
+                        };
+                        io.to(`vendor_${resolvedNextVendorId}`).emit('notification_received', notifPayload);
+                        io.emit('new_notification', notifPayload);
+                        io.emit('vendor_notification_updated', { vendorId: resolvedNextVendorId });
                     }
+                } catch (notifErr) {
+                    console.error('Error creating next vendor notification on subtask creation:', notifErr);
                 }
             }
 
