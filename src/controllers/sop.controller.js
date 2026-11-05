@@ -1,0 +1,819 @@
+const { pool } = require('../config/db.config');
+const sopRepository = require('../repositories/sop.repository');
+const notificationRepository = require('../repositories/notification.repository');
+const chatRepository = require('../repositories/chat.repository');
+const { sendSuccess, sendError } = require('../utils/response.helper');
+const { AppError } = require('../middlewares/error.middleware');
+
+class SOPController {
+    /**
+     * Get all eligible service orders for current user
+     */
+    getOrders = async (req, res, next) => {
+        try {
+            const orders = await sopRepository.getEligibleOrders(req.user);
+            sendSuccess(res, 'SOP eligible orders retrieved successfully', orders);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Get full SOP sequence for a specific order
+     */
+    getOrderSOP = async (req, res, next) => {
+        try {
+            const orderId = req.params.orderId;
+            const sopData = await sopRepository.getOrderSOP(orderId, req.user);
+
+            if (!sopData) {
+                return next(new AppError('SOP order not found or you are not authorized to view it', 404));
+            }
+
+            sendSuccess(res, 'SOP details retrieved successfully', sopData);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Reorder services sequence
+     */
+    reorderServices = async (req, res, next) => {
+        try {
+            const orderId = req.params.orderId;
+            const { services } = req.body;
+
+            if (!Array.isArray(services) || services.length === 0) {
+                return next(new AppError('Services list with sequence orders is required', 400));
+            }
+
+            // Verify order exists and user is authorized
+            const sop = await sopRepository.getOrderSOP(orderId, req.user);
+            if (!sop) {
+                return next(new AppError('Order not found or unauthorized', 403));
+            }
+
+            await sopRepository.reorderServices(sop.id, services);
+
+            // Fetch refreshed SOP
+            const updatedSOP = await sopRepository.getOrderSOP(sop.id, req.user);
+
+            // Emit real-time update
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_sequence_updated', {
+                    orderId: sop.id,
+                    order_id: sop.id,
+                    order_no: sop.order_no,
+                    services: updatedSOP.services
+                });
+            }
+
+            sendSuccess(res, 'Service sequence updated successfully', updatedSOP);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Update service details (dates, description)
+     */
+    updateService = async (req, res, next) => {
+        try {
+            const serviceId = req.params.serviceId;
+            const { start_date, end_date, description, sequence_order } = req.body;
+
+            const service = await sopRepository.findServiceById(serviceId);
+            if (!service) {
+                return next(new AppError('Service not found', 404));
+            }
+
+            // Authorization: vendor assigned to service, customer owner, or admin
+            const isVendor = req.user.vendor_id && req.user.vendor_id == service.vendor_id;
+            const isCustomer = req.user.id == service.customer_user_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isCustomer && !isAdmin) {
+                return next(new AppError('You are not authorized to edit this service', 403));
+            }
+
+            // Validate start_date <= end_date for the service
+            const finalStart = start_date !== undefined ? start_date : service.start_date;
+            const finalEnd = end_date !== undefined ? end_date : service.end_date;
+            if (finalStart && finalEnd) {
+                if (new Date(finalStart).getTime() > new Date(finalEnd).getTime()) {
+                    return next(new AppError('Start date cannot be after end date', 400));
+                }
+            }
+
+            await sopRepository.updateService(serviceId, {
+                start_date,
+                end_date,
+                description,
+                sequence_order
+            });
+
+            const updatedService = await sopRepository.findServiceById(serviceId);
+
+            // Emit socket event
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_service_updated', {
+                    serviceId,
+                    service_id: serviceId,
+                    orderId: service.order_id,
+                    order_id: service.order_id,
+                    updatedService
+                });
+            }
+
+            sendSuccess(res, 'Service updated successfully', updatedService);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Add subtask to a service
+     */
+    createSubtask = async (req, res, next) => {
+        try {
+            const serviceId = req.params.serviceId;
+            const { title, description, start_date, end_date, next_order_service_id, next_vendor_id } = req.body;
+
+            if (!title || !title.trim()) {
+                return next(new AppError('Subtask title is required', 400));
+            }
+
+            const service = await sopRepository.findServiceById(serviceId);
+            if (!service) {
+                return next(new AppError('Service not found', 404));
+            }
+
+            // Authorization: assigned vendor or admin
+            const isVendor = req.user.vendor_id && req.user.vendor_id == service.vendor_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+            // Allow customers if permitted by organization
+            const isCustomer = req.user.id == service.customer_user_id;
+
+            if (!isVendor && !isAdmin && !isCustomer) {
+                return next(new AppError('You are not authorized to create subtasks for this service', 403));
+            }
+
+            let resolvedNextVendorId = next_vendor_id || null;
+            if (next_order_service_id && !resolvedNextVendorId) {
+                const { pool } = require('../config/db.config');
+                const [targetRows] = await pool.execute('SELECT vendor_id FROM order_services WHERE id = ?', [next_order_service_id]);
+                if (targetRows.length > 0) {
+                    resolvedNextVendorId = targetRows[0].vendor_id;
+                }
+            }
+
+            const subtask = await sopRepository.createSubtask({
+                order_service_id: service.id,
+                order_id: service.order_id,
+                vendor_id: service.vendor_id,
+                next_order_service_id: next_order_service_id ? Number(next_order_service_id) : null,
+                next_vendor_id: resolvedNextVendorId ? Number(resolvedNextVendorId) : null,
+                title: title.trim(),
+                description: description ? description.trim() : null,
+                start_date: start_date || null,
+                end_date: end_date || null
+            });
+
+            // Emit socket event
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_subtask_created', {
+                    serviceId: service.id,
+                    service_id: service.id,
+                    orderId: service.order_id,
+                    order_id: service.order_id,
+                    subtask
+                });
+
+                // If subtask ends today and has next vendor, trigger notification immediately
+                if (subtask.end_date && subtask.next_vendor_id) {
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    const endDateStr = new Date(subtask.end_date).toISOString().slice(0, 10);
+                    if (todayStr === endDateStr) {
+                        sopRepository.notifyDueSubtaskVendors(io).catch(err => console.error('Auto notify error:', err));
+                    }
+                }
+            }
+
+            sendSuccess(res, 'Subtask created successfully', subtask, 201);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Update a subtask
+     */
+    updateSubtask = async (req, res, next) => {
+        try {
+            const subtaskId = req.params.subtaskId;
+            const { title, description, start_date, end_date, status, sequence_order } = req.body;
+
+            const subtask = await sopRepository.findSubtaskById(subtaskId);
+            if (!subtask) {
+                return next(new AppError('Subtask not found', 404));
+            }
+
+            const isVendor = req.user.vendor_id && req.user.vendor_id == subtask.vendor_id;
+            const isCustomer = req.user.id == subtask.customer_user_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isCustomer && !isAdmin) {
+                return next(new AppError('You are not authorized to update this subtask', 403));
+            }
+
+            // Validate start_date <= end_date for the subtask
+            const finalStart = start_date !== undefined ? start_date : subtask.start_date;
+            const finalEnd = end_date !== undefined ? end_date : subtask.end_date;
+            if (finalStart && finalEnd) {
+                if (new Date(finalStart).getTime() > new Date(finalEnd).getTime()) {
+                    return next(new AppError('Subtask start date cannot be after end date', 400));
+                }
+            }
+
+            await sopRepository.updateSubtask(subtaskId, {
+                title,
+                description,
+                start_date,
+                end_date,
+                status,
+                sequence_order
+            });
+
+            const updated = await sopRepository.findSubtaskById(subtaskId);
+
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_subtask_updated', {
+                    subtaskId,
+                    subtask_id: subtaskId,
+                    serviceId: subtask.order_service_id,
+                    service_id: subtask.order_service_id,
+                    orderId: subtask.order_id,
+                    order_id: subtask.order_id,
+                    updated
+                });
+            }
+
+            if (status === 'completed' && subtask.status !== 'completed') {
+                await this.checkAndNotifyNextVendor(subtaskId, io);
+            }
+
+            sendSuccess(res, 'Subtask updated successfully', updated);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Reorder subtasks within a service
+     */
+    reorderSubtasks = async (req, res, next) => {
+        try {
+            const serviceId = req.params.serviceId;
+            const { subtasks } = req.body;
+
+            if (!Array.isArray(subtasks)) {
+                return next(new AppError('Subtasks array is required', 400));
+            }
+
+            const service = await sopRepository.findServiceById(serviceId);
+            if (!service) {
+                return next(new AppError('Service not found', 404));
+            }
+
+            const isVendor = req.user.vendor_id && req.user.vendor_id == service.vendor_id;
+            const isCustomer = req.user.id == service.customer_user_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isCustomer && !isAdmin) {
+                return next(new AppError('You are not authorized to reorder subtasks for this service', 403));
+            }
+
+            await sopRepository.reorderSubtasks(serviceId, subtasks);
+
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_subtasks_reordered', {
+                    serviceId,
+                    service_id: serviceId,
+                    orderId: service.order_id,
+                    order_id: service.order_id,
+                    subtasks
+                });
+            }
+
+            sendSuccess(res, 'Subtasks reordered successfully');
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Delete subtask
+     */
+    deleteSubtask = async (req, res, next) => {
+        try {
+            const subtaskId = req.params.subtaskId;
+            const subtask = await sopRepository.findSubtaskById(subtaskId);
+            if (!subtask) {
+                return next(new AppError('Subtask not found', 404));
+            }
+
+            const isVendor = req.user.vendor_id && req.user.vendor_id == subtask.vendor_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isAdmin) {
+                return next(new AppError('Only the assigned vendor can delete subtasks', 403));
+            }
+
+            await sopRepository.deleteSubtask(subtaskId);
+
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_subtask_deleted', {
+                    subtaskId,
+                    subtask_id: subtaskId,
+                    serviceId: subtask.order_service_id,
+                    service_id: subtask.order_service_id,
+                    orderId: subtask.order_id,
+                    order_id: subtask.order_id
+                });
+            }
+
+            sendSuccess(res, 'Subtask deleted successfully', { id: subtaskId });
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Mark subtask as complete
+     */
+    completeSubtask = async (req, res, next) => {
+        try {
+            const subtaskId = req.params.subtaskId;
+            const subtask = await sopRepository.findSubtaskById(subtaskId);
+            if (!subtask) {
+                return next(new AppError('Subtask not found', 404));
+            }
+
+            const isVendor = req.user.vendor_id && req.user.vendor_id == subtask.vendor_id;
+            const isCustomer = req.user.id && req.user.id == subtask.customer_user_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isCustomer && !isAdmin) {
+                return next(new AppError('Only the assigned vendor or project owner can mark a subtask as complete', 403));
+            }
+
+            await sopRepository.updateSubtask(subtaskId, { status: 'completed' });
+
+            const updated = await sopRepository.findSubtaskById(subtaskId);
+
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_subtask_completed', {
+                    subtaskId,
+                    subtask_id: subtaskId,
+                    updated,
+                    serviceId: subtask.order_service_id,
+                    service_id: subtask.order_service_id,
+                    orderId: subtask.order_id,
+                    order_id: subtask.order_id
+                });
+            }
+
+            // Check if subtask is before next service in multi-vendor order and notify next vendor & customer
+            await this.checkAndNotifyNextVendor(subtaskId, io);
+
+            sendSuccess(res, 'Subtask marked as completed successfully', updated);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Upload proof image for subtask
+     */
+    uploadProof = async (req, res, next) => {
+        try {
+            const subtaskId = req.params.subtaskId;
+            const subtask = await sopRepository.findSubtaskById(subtaskId);
+            if (!subtask) {
+                return next(new AppError('Subtask not found', 404));
+            }
+
+            if (!req.file) {
+                return next(new AppError('No proof image file provided', 400));
+            }
+
+            const fileUrl = `/uploads/sop/${req.file.filename}`;
+            const uploadedByType = req.user.vendor_id ? 'vendor' : 'customer';
+            const uploadedById = req.user.vendor_id || req.user.id;
+
+            await sopRepository.addProofImage(subtaskId, {
+                image_url: fileUrl,
+                original_name: req.file.originalname,
+                file_size: req.file.size,
+                uploaded_by_type: uploadedByType,
+                uploaded_by_id: uploadedById,
+                notes: req.body.notes || null
+            });
+
+            const io = req.app.get('io');
+
+            // If auto_complete is requested with proof
+            if (req.body.mark_completed === 'true' || req.body.mark_completed === true) {
+                await sopRepository.updateSubtask(subtaskId, { status: 'completed' });
+                await this.checkAndNotifyNextVendor(subtaskId, io);
+            }
+
+            const updatedSubtask = await sopRepository.findSubtaskById(subtaskId);
+
+            if (io) {
+                io.emit('sop_proof_uploaded', {
+                    subtaskId,
+                    subtask_id: subtaskId,
+                    updatedSubtask,
+                    serviceId: subtask.order_service_id,
+                    service_id: subtask.order_service_id,
+                    orderId: subtask.order_id,
+                    order_id: subtask.order_id
+                });
+            }
+
+            sendSuccess(res, 'Completion proof uploaded successfully', {
+                file_url: fileUrl,
+                proof_image_url: fileUrl,
+                original_name: req.file.originalname,
+                subtask: updatedSubtask
+            });
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Vendor raises completion request for a service
+     */
+    raiseCompletionRequest = async (req, res, next) => {
+        try {
+            const serviceId = req.params.serviceId;
+            const { note } = req.body;
+
+            const service = await sopRepository.findServiceById(serviceId);
+            if (!service) {
+                return next(new AppError('Service not found', 404));
+            }
+
+            const isVendor = req.user.vendor_id && req.user.vendor_id == service.vendor_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isVendor && !isAdmin) {
+                return next(new AppError('Only the assigned vendor can raise a completion request', 403));
+            }
+
+            if (service.service_status === 'completed') {
+                return next(new AppError('Service is already marked as completed', 400));
+            }
+
+            const request = await sopRepository.createCompletionRequest(
+                service.id,
+                service.order_id,
+                service.vendor_id,
+                note
+            );
+
+            // Notify Customer
+            if (service.customer_user_id) {
+                await notificationRepository.create({
+                    user_id: service.customer_user_id,
+                    target_type: 'customer',
+                    order_id: service.order_id,
+                    service_id: service.id,
+                    title: `SOP Service Completion Request: ${service.service_name || service.subcategory_name}`,
+                    message: `${service.vendor_name || 'Vendor'} has completed all subtasks for ${service.service_name || service.subcategory_name} and requested your approval.`,
+                    type: 'completion_request'
+                });
+            }
+
+            // Real-time broadcast
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_completion_requested', {
+                    serviceId: service.id,
+                    service_id: service.id,
+                    orderId: service.order_id,
+                    order_id: service.order_id,
+                    request
+                });
+            }
+
+            sendSuccess(res, 'Completion request submitted to customer successfully', request, 201);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Customer responds to completion request (accept / reject)
+     */
+    respondCompletionRequest = async (req, res, next) => {
+        try {
+            const requestId = req.params.requestId;
+            const { action, reason } = req.body;
+
+            if (!['approve', 'reject'].includes(action)) {
+                return next(new AppError('Action must be either "approve" or "reject"', 400));
+            }
+
+            const request = await sopRepository.findCompletionRequestById(requestId);
+            if (!request) {
+                return next(new AppError('Completion request not found', 404));
+            }
+
+            // Authorization: customer owner of order or admin
+            const isCustomer = req.user.id == request.customer_user_id;
+            const isAdmin = ['super_admin', 'admin', 'manager'].includes(req.user.role);
+
+            if (!isCustomer && !isAdmin) {
+                return next(new AppError('Only the order customer or administrator can review this completion request', 403));
+            }
+
+            const updatedRequest = await sopRepository.respondToCompletionRequest(
+                requestId,
+                req.user.id,
+                action,
+                reason
+            );
+
+            // Notify Vendor
+            if (request.vendor_id) {
+                await notificationRepository.create({
+                    vendor_id: request.vendor_id,
+                    target_type: 'vendor',
+                    order_id: request.order_id,
+                    service_id: request.order_service_id,
+                    title: action === 'approve'
+                        ? `Completion Approved: ${request.service_name || request.subcategory_name}`
+                        : `Completion Request Rejected: ${request.service_name || request.subcategory_name}`,
+                    message: action === 'approve'
+                        ? `Customer approved work completion for ${request.service_name || request.subcategory_name}. Status is now Completed!`
+                        : `Customer requested corrections: ${reason || 'Please inspect subtasks.'}`,
+                    type: action === 'approve' ? 'work_completed' : 'completion_rejected'
+                });
+            }
+
+            // Real-time broadcast
+            const io = req.app.get('io');
+            if (io) {
+                io.emit('sop_completion_responded', {
+                    requestId,
+                    request_id: requestId,
+                    orderId: request.order_id,
+                    order_id: request.order_id,
+                    serviceId: request.order_service_id,
+                    service_id: request.order_service_id,
+                    action,
+                    updatedRequest
+                });
+            }
+
+            sendSuccess(
+                res,
+                action === 'approve' ? 'Service completion approved and marked as Completed!' : 'Completion request rejected',
+                updatedRequest
+            );
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    /**
+     * Check if the completed subtask is before a subsequent service in a multi-vendor project order.
+     * When there are two or more vendors tagged to that order, notify the next vendor:
+     * "the before process is completing soon , you order is on [date]"
+     * And dispatch order notifications to both vendor and customer portals.
+     */
+    checkAndNotifyNextVendor = async (subtaskId, io) => {
+        try {
+            const subtask = await sopRepository.findSubtaskById(subtaskId);
+            if (!subtask) return;
+
+            const orderId = subtask.order_id;
+            const currentServiceId = subtask.order_service_id;
+
+            // Fetch order details
+            const [orders] = await pool.execute(
+                `SELECT o.*, u.name as customer_name, u.mobile as customer_mobile 
+                 FROM orders o 
+                 JOIN users u ON o.user_id = u.id 
+                 WHERE o.id = ?`,
+                [orderId]
+            );
+            if (orders.length === 0) return;
+            const order = orders[0];
+
+            // Fetch all active services for this order sorted by sequence_order ASC, id ASC
+            const [services] = await pool.execute(
+                `SELECT os.*, v.name as vendor_name, v.mobile as vendor_mobile, sc.name as subcategory_name
+                 FROM order_services os
+                 LEFT JOIN vendors v ON os.vendor_id = v.id
+                 LEFT JOIN subcategories sc ON os.subcategory_id = sc.id
+                 WHERE os.order_id = ? AND os.service_status != 'removed'
+                 ORDER BY os.sequence_order ASC, os.id ASC`,
+                [orderId]
+            );
+
+            // Fetch all subtasks for the current service
+            const [currentSubtasks] = await pool.execute(
+                `SELECT * FROM order_service_subtasks 
+                 WHERE order_service_id = ? 
+                 ORDER BY sequence_order ASC, id ASC`,
+                [currentServiceId]
+            );
+
+            // Find current service index
+            const currentServiceIndex = services.findIndex(s => s.id === currentServiceId);
+            const currentService = currentServiceIndex >= 0 ? services[currentServiceIndex] : null;
+
+            // Check if there are 2 or more distinct vendors tagged to that order
+            const distinctVendorIds = [...new Set(services.map(s => s.vendor_id).filter(Boolean))];
+            const hasMultipleVendors = distinctVendorIds.length >= 2;
+
+            // Check if this subtask is the one "before the service"
+            // (i.e. last subtask of current service by sequence order, or all subtasks in current service are now completed)
+            let isSubtaskBeforeNextService = false;
+            if (currentSubtasks.length > 0) {
+                const maxSeq = Math.max(...currentSubtasks.map(st => st.sequence_order || 0));
+                const isLastInSeq = (subtask.sequence_order === maxSeq) || 
+                                    (subtask.id === currentSubtasks[currentSubtasks.length - 1].id);
+                const pendingOtherSubtasks = currentSubtasks.filter(
+                    st => st.id !== subtask.id && st.status !== 'completed'
+                );
+                isSubtaskBeforeNextService = isLastInSeq || pendingOtherSubtasks.length === 0;
+            }
+
+            // Helper to get service start date
+            const getServiceStartDate = async (srv) => {
+                if (srv.start_date) return srv.start_date;
+                const [nextSubtasks] = await pool.execute(
+                    `SELECT start_date FROM order_service_subtasks 
+                     WHERE order_service_id = ? AND start_date IS NOT NULL 
+                     ORDER BY sequence_order ASC, id ASC LIMIT 1`,
+                    [srv.id]
+                );
+                if (nextSubtasks.length > 0 && nextSubtasks[0].start_date) {
+                    return nextSubtasks[0].start_date;
+                }
+                return null;
+            };
+
+            // Helper to format date string
+            const formatDateString = (dateVal) => {
+                if (!dateVal) return 'the upcoming schedule';
+                try {
+                    const d = new Date(dateVal);
+                    if (!isNaN(d.getTime())) {
+                        return d.toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
+                        });
+                    }
+                    return String(dateVal);
+                } catch (e) {
+                    return String(dateVal);
+                }
+            };
+
+            // Find next service in sequence
+            const nextService = (currentServiceIndex >= 0 && currentServiceIndex < services.length - 1)
+                ? services[currentServiceIndex + 1]
+                : null;
+
+            let nextFormattedDate = 'the upcoming schedule';
+            if (nextService) {
+                const targetDateStr = await getServiceStartDate(nextService);
+                nextFormattedDate = formatDateString(targetDateStr);
+            }
+
+            // If this is the subtask completing the before service, and there are 2 or more vendors tagged:
+            if (hasMultipleVendors && isSubtaskBeforeNextService) {
+                // Find all upcoming services in sequence that belong to different vendors
+                const upcomingServices = services.slice(currentServiceIndex + 1);
+                const notifiedVendors = new Set();
+
+                for (const targetService of upcomingServices) {
+                    const targetVendorId = targetService.vendor_id;
+                    if (!targetVendorId || targetVendorId === currentService?.vendor_id || notifiedVendors.has(targetVendorId)) {
+                        continue;
+                    }
+                    notifiedVendors.add(targetVendorId);
+
+                    const targetDateStr = await getServiceStartDate(targetService);
+                    const formattedDate = formatDateString(targetDateStr);
+
+                    // Message format matching user's exact specification:
+                    // "the before process is completing soon , you order is on "date"  "
+                    const vendorMessage = `the before process is completing soon , you order is on ${formattedDate}`;
+                    const vendorTitle = `Process Progress Alert: Order #${order.order_no || order.id}`;
+
+                    // Insert into notifications table (main notification) with idempotency check
+                    const notifId = await notificationRepository.createOrUpdateForOrder({
+                        vendor_id: targetVendorId,
+                        target_type: 'vendor',
+                        order_id: order.id,
+                        service_id: targetService.id,
+                        title: vendorTitle,
+                        message: vendorMessage,
+                        type: 'order_progress_alert'
+                    });
+
+                    // Socket real-time notification push
+                    if (io) {
+                        const notifPayload = {
+                            id: notifId,
+                            order_id: order.id,
+                            order_no: order.order_no,
+                            service_id: targetService.id,
+                            service_name: targetService.service_name || targetService.subcategory_name,
+                            title: vendorTitle,
+                            message: vendorMessage,
+                            type: 'order_progress_alert',
+                            vendor_id: targetVendorId,
+                            is_read: false,
+                            created_at: new Date()
+                        };
+
+                        io.to(`vendor_${targetVendorId}`).emit('notification_received', notifPayload);
+                        io.emit('notification_received', notifPayload);
+                        io.emit('new_notification', notifPayload);
+                        io.emit('vendor_notification_updated', { vendorId: targetVendorId });
+                    }
+                }
+            }
+
+            // Mandatory Customer Notification for Order-Related Action
+            await this.notifyCustomerSubtaskDone(order, subtask, currentService, nextService, nextFormattedDate, io);
+
+        } catch (error) {
+            console.error('[SOPController] checkAndNotifyNextVendor error:', error);
+        }
+    };
+
+    /**
+     * Dispatch order notification to the customer portal
+     */
+    notifyCustomerSubtaskDone = async (order, subtask, currentService, nextService, nextDate, io) => {
+        try {
+            const currentPhaseName = currentService?.service_name || currentService?.subcategory_name || 'Service Phase';
+            const title = `Subtask Done: ${subtask.title}`;
+            let message = `Subtask "${subtask.title}" has been completed for phase "${currentPhaseName}" on Order #${order.order_no || order.id}.`;
+            if (nextService && nextDate) {
+                const nextPhaseName = nextService.service_name || nextService.subcategory_name || 'Next Service';
+                message += ` The before process is completing soon, next phase "${nextPhaseName}" is scheduled on ${nextDate}.`;
+            }
+
+            const notifId = await notificationRepository.create({
+                user_id: order.user_id,
+                target_type: 'customer',
+                order_id: order.id,
+                service_id: subtask.order_service_id,
+                title: title,
+                message: message,
+                type: 'order_update'
+            });
+
+            if (io) {
+                const customerPayload = {
+                    id: notifId,
+                    user_id: order.user_id,
+                    order_id: order.id,
+                    order_no: order.order_no,
+                    title,
+                    message,
+                    type: 'order_update',
+                    created_at: new Date()
+                };
+
+                io.to(`customer_${order.user_id}`).emit('notification_received', customerPayload);
+                io.emit('notification_received', customerPayload);
+                io.emit('new_notification', customerPayload);
+                io.emit('order_status_updated', { order_id: order.id });
+            }
+        } catch (error) {
+            console.error('[SOPController] notifyCustomerSubtaskDone error:', error);
+        }
+    };
+}
+
+module.exports = new SOPController();

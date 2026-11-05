@@ -92,15 +92,20 @@ class AuthService {
         let user = await userRepository.findByMobile(cleanMobile);
 
         if (!user) {
-            // Auto-create customer account on verified mobile OTP
+            // Auto-create customer account on verified mobile OTP with nil initial profile data
             const hashedPassword = await bcrypt.hash(cleanOtp, 10);
             const newUserId = await userRepository.create({
-                name: 'Site Engineer',
-                email: `${cleanMobile}@civilworks.in`,
+                name: null,
+                email: null,
                 mobile: cleanMobile,
                 password: hashedPassword,
                 role_id: 4, // Customer role
-                status: 'active'
+                status: 'active',
+                designation: null,
+                organization: null,
+                site_location: null,
+                safety_clearance: null,
+                preferences: null
             });
             user = await userRepository.findById(newUserId);
         }
@@ -142,12 +147,17 @@ class AuthService {
             const cleanMobile = isEmail ? null : String(mobileOrEmail).replace(/\D/g, '').slice(-10);
             const hashedPassword = await bcrypt.hash(String(password), 10);
             const newUserId = await userRepository.create({
-                name: isEmail ? mobileOrEmail.split('@')[0] : 'Site Engineer',
-                email: isEmail ? mobileOrEmail : `${cleanMobile}@civilworks.in`,
+                name: isEmail ? mobileOrEmail.split('@')[0] : null,
+                email: isEmail ? mobileOrEmail : null,
                 mobile: cleanMobile,
                 password: hashedPassword,
                 role_id: 4,
-                status: 'active'
+                status: 'active',
+                designation: null,
+                organization: null,
+                site_location: null,
+                safety_clearance: null,
+                preferences: null
             });
             user = await userRepository.findById(newUserId);
             isMatch = true;

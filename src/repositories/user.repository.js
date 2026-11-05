@@ -6,6 +6,12 @@ class UserRepository {
             'SELECT u.*, r.name as role FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = ?',
             [id]
         );
+        if (rows[0]) {
+            rows[0].phone = rows[0].mobile;
+            if (rows[0].preferences && typeof rows[0].preferences === 'string') {
+                try { rows[0].preferences = JSON.parse(rows[0].preferences); } catch (e) { }
+            }
+        }
         return rows[0];
     }
 
@@ -14,22 +20,47 @@ class UserRepository {
             'SELECT u.*, r.name as role FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.email = ?',
             [email]
         );
+        if (rows[0]) {
+            rows[0].phone = rows[0].mobile;
+            if (rows[0].preferences && typeof rows[0].preferences === 'string') {
+                try { rows[0].preferences = JSON.parse(rows[0].preferences); } catch (e) { }
+            }
+        }
         return rows[0];
     }
 
     async findByMobile(mobile) {
+        const cleanMobile = String(mobile).replace(/\D/g, '').slice(-10);
         const [rows] = await pool.execute(
-            'SELECT u.*, r.name as role FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.mobile = ?',
-            [mobile]
+            'SELECT u.*, r.name as role FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE RIGHT(REPLACE(REPLACE(REPLACE(u.mobile, " ", ""), "-", ""), "+", ""), 10) = ? OR u.mobile = ?',
+            [cleanMobile, cleanMobile]
         );
+        if (rows[0]) {
+            rows[0].phone = rows[0].mobile;
+            if (rows[0].preferences && typeof rows[0].preferences === 'string') {
+                try { rows[0].preferences = JSON.parse(rows[0].preferences); } catch (e) { }
+            }
+        }
         return rows[0];
     }
 
     async create(userData) {
-        const { name, email, mobile, password, role_id = 4, permissions = null } = userData; // Default to 4 (customer)
+        const {
+            name = null, email = null, mobile, password, role_id = 4, permissions = null,
+            designation = null,
+            organization = null,
+            site_location = null,
+            safety_clearance = null,
+            preferences = null
+        } = userData;
         const [result] = await pool.execute(
-            'INSERT INTO users (name, email, mobile, password, role_id, permissions) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, email, mobile, password, role_id, permissions]
+            `INSERT INTO users (name, email, mobile, password, role_id, permissions, designation, organization, site_location, safety_clearance, preferences) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                name, email, mobile, password, role_id, permissions,
+                designation, organization, site_location, safety_clearance,
+                preferences && typeof preferences === 'object' ? JSON.stringify(preferences) : preferences
+            ]
         );
         return result.insertId;
     }
@@ -38,10 +69,15 @@ class UserRepository {
         const fields = [];
         const values = [];
 
+        const allowedKeys = [
+            'name', 'email', 'mobile', 'image', 'role_id', 'permissions', 'status',
+            'designation', 'organization', 'site_location', 'safety_clearance', 'preferences'
+        ];
+
         for (const [key, value] of Object.entries(updateData)) {
-            if (['name', 'email', 'mobile', 'image', 'role_id', 'permissions', 'status'].includes(key)) {
-                fields.push(`${key} = ?`);
-                values.push(value);
+            if (allowedKeys.includes(key) && value !== undefined) {
+                fields.push(`\`${key}\` = ?`);
+                values.push(key === 'preferences' && typeof value === 'object' ? JSON.stringify(value) : value);
             }
         }
 
@@ -94,13 +130,15 @@ class UserRepository {
 
         // Get paginated data
         const [rows] = await pool.execute(
-            `SELECT u.id, u.name, u.email, u.mobile, u.image, u.permissions, u.status, r.name as role,
+            `SELECT u.id, u.name, u.email, u.mobile, u.image, u.permissions, u.status,
+                    u.designation, u.organization, u.site_location, u.safety_clearance, u.created_at,
+                    r.name as role,
              (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as totalOrders,
              (SELECT IFNULL(SUM(total_amount), 0) FROM orders WHERE user_id = u.id) as totalSpent
              FROM users u 
              LEFT JOIN roles r ON u.role_id = r.id 
              ${whereClause} 
-             ORDER BY u.updated_at DESC
+             ORDER BY u.id DESC
              LIMIT ? OFFSET ?`,
             [...params, limit.toString(), offset.toString()]
         );

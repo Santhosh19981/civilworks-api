@@ -8,8 +8,8 @@ class HelperController {
      */
     getAll = async (req, res, next) => {
         try {
-            const { search, page, limit, status } = req.query;
-            const result = await helperRepository.findAll({ search, page, limit, status });
+            const { search, page, limit, status, main_category_id, category_id, subcategory_id } = req.query;
+            const result = await helperRepository.findAll({ search, page, limit, status, main_category_id, category_id, subcategory_id });
             sendSuccess(res, 'Helpers retrieved successfully', result.data, 200, result.pagination);
         } catch (error) {
             next(error);

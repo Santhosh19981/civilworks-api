@@ -114,6 +114,14 @@ class AuthController {
         delete safeUser.password;
         sendSuccess(res, 'User data retrieved', { user: safeUser });
     };
+
+    /**
+     * Update Current User
+     */
+    updateMe = async (req, res, next) => {
+        const userController = require('./user.controller');
+        return userController.updateProfile(req, res, next);
+    };
 }
 
 module.exports = new AuthController();

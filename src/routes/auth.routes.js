@@ -13,6 +13,7 @@ router.post('/logout', authController.logout);
 
 // Protected routes
 router.get('/me', protect, authController.getMe);
+router.put('/me', protect, authController.updateMe);
 
 module.exports = router;
 

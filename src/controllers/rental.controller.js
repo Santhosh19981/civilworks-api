@@ -8,14 +8,18 @@ class RentalController {
      */
     getAll = async (req, res, next) => {
         try {
-            const { featured, search, page, limit } = req.query;
-            const filters = {
-                featured: featured !== undefined ? featured === 'true' : undefined,
-                search
-            };
+            const { main_category_id, category_id, subcategory_id, rental_category_id, featured, search, status, page, limit } = req.query;
+            const filters = {};
+            if (main_category_id) filters.main_category_id = main_category_id;
+            if (category_id) filters.category_id = category_id;
+            if (subcategory_id) filters.subcategory_id = subcategory_id;
+            if (rental_category_id) filters.rental_category_id = rental_category_id;
+            if (status) filters.status = status;
+            if (featured !== undefined) filters.featured = featured === 'true';
+            if (search) filters.search = search;
             
             const p = parseInt(page) || 1;
-            const l = parseInt(limit) || 10;
+            const l = parseInt(limit) || 50;
             
             const result = await rentalRepository.findAll(filters, p, l);
             sendSuccess(res, 'Rentals retrieved successfully', result.data, 200, result.pagination);

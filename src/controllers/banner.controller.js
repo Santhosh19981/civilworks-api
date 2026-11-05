@@ -5,8 +5,22 @@ const { AppError } = require('../middlewares/error.middleware');
 class BannerController {
     getAll = async (req, res, next) => {
         try {
-            const banners = await bannerRepository.findAll();
+            const { main_category_id, all } = req.query;
+            const banners = await bannerRepository.findAll({
+                main_category_id: main_category_id ? Number(main_category_id) : undefined,
+                all: all === 'true' || all === '1' || req.query.isAdmin === 'true'
+            });
             sendSuccess(res, 'Banners retrieved successfully', banners);
+        } catch (error) {
+            next(error);
+        }
+    };
+
+    getById = async (req, res, next) => {
+        try {
+            const banner = await bannerRepository.findById(req.params.id);
+            if (!banner) return next(new AppError('Banner not found', 404));
+            sendSuccess(res, 'Banner retrieved successfully', banner);
         } catch (error) {
             next(error);
         }
@@ -25,7 +39,7 @@ class BannerController {
     update = async (req, res, next) => {
         try {
             const success = await bannerRepository.update(req.params.id, req.body);
-            if (!success) return next(new AppError('Banner not found', 404));
+            if (!success) return next(new AppError('Banner not found or no changes made', 404));
             const banner = await bannerRepository.findById(req.params.id);
             sendSuccess(res, 'Banner updated successfully', banner);
         } catch (error) {

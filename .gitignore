@@ -31,3 +31,9 @@ yarn-error.log*
 # System Files
 .DS_Store
 Thumbs.db
+
+api-qa.zip
+scratch/
+
+# Root deployment & scratch scripts containing server credentials
+/*.js

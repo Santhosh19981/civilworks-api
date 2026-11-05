@@ -6,36 +6,73 @@ class ProductRepository {
         let query = `
             SELECT 
                 p.*, 
-                s.name as subcategory_name, 
-                c.name as category_name
+                s.name as subcategory_name,
+                s.image as subcategory_image,
+                s.type as subcategory_type,
+                s.measurement_type,
+                c.name as category_name,
+                c.icon as category_image,
+                c.main_category_id,
+                mc.name as main_category_name,
+                u.name as unit_name,
+                u.unit_category
             FROM products p 
             LEFT JOIN subcategories s ON p.subcategory_id = s.id 
             LEFT JOIN categories c ON p.category_id = c.id 
+            LEFT JOIN main_categories mc ON c.main_category_id = mc.id
+            LEFT JOIN units u ON p.unit_id = u.id
             WHERE 1=1`;
-        let countQuery = 'SELECT COUNT(*) as total FROM products p WHERE 1=1';
+        let countQuery = `
+            SELECT COUNT(*) as total 
+            FROM products p 
+            LEFT JOIN subcategories s ON p.subcategory_id = s.id 
+            LEFT JOIN categories c ON p.category_id = c.id 
+            LEFT JOIN main_categories mc ON c.main_category_id = mc.id
+            LEFT JOIN units u ON p.unit_id = u.id
+            WHERE 1=1`;
         const params = [];
+
+        if (filters.main_category_id) {
+            const matchCond = ' AND (c.main_category_id = ? OR EXISTS (SELECT 1 FROM category_main_categories cmc WHERE cmc.category_id = c.id AND cmc.main_category_id = ?))';
+            query += matchCond;
+            countQuery += matchCond;
+            params.push(filters.main_category_id, filters.main_category_id);
+        }
 
         if (filters.category_id) {
             query += ' AND p.category_id = ?';
-            countQuery += ' AND category_id = ?';
+            countQuery += ' AND p.category_id = ?';
             params.push(filters.category_id);
         }
 
         if (filters.subcategory_id) {
             query += ' AND p.subcategory_id = ?';
-            countQuery += ' AND subcategory_id = ?';
+            countQuery += ' AND p.subcategory_id = ?';
             params.push(filters.subcategory_id);
+        }
+
+        if (filters.type || filters.subcategory_type) {
+            const subType = filters.type || filters.subcategory_type;
+            query += ' AND s.type = ?';
+            countQuery += ' AND s.type = ?';
+            params.push(subType);
+        }
+
+        if (filters.status) {
+            query += ' AND p.status = ?';
+            countQuery += ' AND p.status = ?';
+            params.push(filters.status);
         }
 
         if (filters.featured !== undefined) {
             query += ' AND p.featured = ?';
-            countQuery += ' AND featured = ?';
+            countQuery += ' AND p.featured = ?';
             params.push(filters.featured ? 1 : 0);
         }
 
         if (filters.search) {
             query += ' AND (p.name LIKE ? OR p.description LIKE ?)';
-            countQuery += ' AND (name LIKE ? OR description LIKE ?)';
+            countQuery += ' AND (p.name LIKE ? OR p.description LIKE ?)';
             params.push(`%${filters.search}%`, `%${filters.search}%`);
         }
 
@@ -43,7 +80,7 @@ class ProductRepository {
         const [[{ total }]] = await pool.execute(countQuery, params);
 
         // Add pagination to query
-        query += ' ORDER BY p.updated_at DESC LIMIT ? OFFSET ?';
+        query += ' ORDER BY p.id ASC LIMIT ? OFFSET ?';
         const queryParams = [...params, limit.toString(), offset.toString()];
 
         const [rows] = await pool.execute(query, queryParams);
@@ -61,10 +98,23 @@ class ProductRepository {
 
     async findById(id) {
         const [rows] = await pool.execute(
-            `SELECT p.*, s.name as subcategory_name, c.name as category_name 
+            `SELECT 
+                p.*, 
+                s.name as subcategory_name,
+                s.image as subcategory_image,
+                s.type as subcategory_type,
+                s.measurement_type,
+                c.name as category_name,
+                c.icon as category_image,
+                c.main_category_id,
+                mc.name as main_category_name,
+                u.name as unit_name,
+                u.unit_category
              FROM products p 
              LEFT JOIN subcategories s ON p.subcategory_id = s.id 
              LEFT JOIN categories c ON p.category_id = c.id 
+             LEFT JOIN main_categories mc ON c.main_category_id = mc.id
+             LEFT JOIN units u ON p.unit_id = u.id
              WHERE p.id = ?`,
             [id]
         );
@@ -73,10 +123,23 @@ class ProductRepository {
 
     async findBySlug(slug) {
         const [rows] = await pool.execute(
-            `SELECT p.*, s.name as subcategory_name, c.name as category_name 
+            `SELECT 
+                p.*, 
+                s.name as subcategory_name,
+                s.image as subcategory_image,
+                s.type as subcategory_type,
+                s.measurement_type,
+                c.name as category_name,
+                c.icon as category_image,
+                c.main_category_id,
+                mc.name as main_category_name,
+                u.name as unit_name,
+                u.unit_category
              FROM products p 
              LEFT JOIN subcategories s ON p.subcategory_id = s.id 
              LEFT JOIN categories c ON p.category_id = c.id 
+             LEFT JOIN main_categories mc ON c.main_category_id = mc.id
+             LEFT JOIN units u ON p.unit_id = u.id
              WHERE p.slug = ?`,
             [slug]
         );
@@ -84,10 +147,26 @@ class ProductRepository {
     }
 
     async create(productData) {
-        const { category_id, subcategory_id, name, slug, image, price, stock, description, featured = false } = productData;
+        const {
+            category_id,
+            subcategory_id,
+            unit_id = null,
+            name,
+            slug,
+            image = null,
+            price = 0,
+            stock = 0,
+            description = null,
+            status = 'active',
+            featured = false,
+            skills = null
+        } = productData;
+
+        const skillsVal = Array.isArray(skills) ? JSON.stringify(skills) : (skills || null);
+
         const [result] = await pool.execute(
-            'INSERT INTO products (category_id, subcategory_id, name, slug, image, price, stock, description, featured) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [category_id, subcategory_id, name, slug, image, price, stock, description, featured ? 1 : 0]
+            'INSERT INTO products (category_id, subcategory_id, unit_id, name, slug, image, price, stock, description, status, featured, skills) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [category_id, subcategory_id, unit_id, name, slug, image, price, stock, description, status, featured ? 1 : 0, skillsVal]
         );
         return result.insertId;
     }
@@ -96,9 +175,12 @@ class ProductRepository {
         const fields = [];
         const values = [];
         for (const [key, value] of Object.entries(updateData)) {
-            if (['category_id', 'subcategory_id', 'name', 'slug', 'image', 'price', 'stock', 'description', 'status', 'featured'].includes(key)) {
+            if (['category_id', 'subcategory_id', 'unit_id', 'name', 'slug', 'image', 'price', 'stock', 'description', 'status', 'featured', 'skills'].includes(key)) {
                 fields.push(`${key} = ?`);
-                values.push(key === 'featured' ? (value ? 1 : 0) : value);
+                let finalVal = value;
+                if (key === 'featured') finalVal = value ? 1 : 0;
+                if (key === 'skills' && Array.isArray(value)) finalVal = JSON.stringify(value);
+                values.push(finalVal);
             }
         }
         if (fields.length === 0) return false;

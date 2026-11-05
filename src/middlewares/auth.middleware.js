@@ -22,6 +22,36 @@ const protect = async (req, res, next) => {
         // 2) Verification token
         const decoded = jwt.verify(token, config.jwt.secret);
 
+        // Check if token belongs to a vendor partner
+        if (decoded.role === 'vendor' || decoded.vendor_id) {
+            const vendorId = decoded.vendor_id || decoded.id;
+            const [vendors] = await pool.execute(
+                'SELECT * FROM vendors WHERE id = ?',
+                [vendorId]
+            );
+
+            if (vendors.length === 0) {
+                return next(new AppError('The vendor belonging to this token no longer exists.', 401));
+            }
+
+            const currentVendor = vendors[0];
+
+            if (currentVendor.status !== 'active') {
+                return next(new AppError('Your vendor account is inactive. Please contact support.', 403));
+            }
+
+            req.user = {
+                id: currentVendor.id,
+                vendor_id: currentVendor.id,
+                name: currentVendor.name,
+                mobile: currentVendor.mobile,
+                email: currentVendor.email,
+                role: 'vendor',
+                status: currentVendor.status
+            };
+            return next();
+        }
+
         // 3) Check if user still exists
         const [users] = await pool.execute(
             'SELECT u.*, r.name as role FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = ?',
@@ -75,10 +105,10 @@ const restrictTo = (...roles) => {
 /**
  * Granular Permission Middleware
  */
-const checkPermission = (moduleName) => {
+const checkPermission = (...moduleNames) => {
     return (req, res, next) => {
-        // Super admins always have access
-        if (req.user.role === 'super_admin') {
+        // Super admins and admins always have access
+        if (req.user.role === 'super_admin' || req.user.role === 'admin') {
             return next();
         }
 
@@ -87,9 +117,10 @@ const checkPermission = (moduleName) => {
             return next(new AppError('You do not have permission to access this module', 403));
         }
 
-        const userPermissions = req.user.permissions.split(',');
-        if (!userPermissions.includes(moduleName)) {
-            return next(new AppError(`Access denied: You do not have permission for the ${moduleName} module`, 403));
+        const userPermissions = req.user.permissions.split(',').map(p => p.trim());
+        const hasAccess = moduleNames.some(m => userPermissions.includes(m) || userPermissions.includes('all'));
+        if (!hasAccess) {
+            return next(new AppError(`Access denied: You do not have permission for the ${moduleNames.join('/')} module`, 403));
         }
 
         next();
