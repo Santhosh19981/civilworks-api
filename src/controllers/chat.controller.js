@@ -175,7 +175,7 @@ class ChatController {
                 senderName = v?.name || req.user.name || 'Vendor Partner';
             } else if (isAdmin) {
                 senderType = 'admin';
-                senderName = 'CivilWorks Support';
+                senderName = 'InfraMart Support';
             }
 
             const resolvedFileUrl = file_url || attachment_url || null;
@@ -436,7 +436,7 @@ class ChatController {
                 conversation_id: conversationId,
                 sender_type: 'system',
                 sender_id: req.user.id,
-                sender_name: 'CivilWorks System',
+                sender_name: 'InfraMart System',
                 message_type: 'system',
                 content: content,
                 file_name: JSON.stringify(metadata),
@@ -587,7 +587,7 @@ class ChatController {
                 conversation_id: conversationId,
                 sender_type: 'system',
                 sender_id: req.user.id,
-                sender_name: 'CivilWorks System',
+                sender_name: 'InfraMart System',
                 message_type: 'system',
                 content: content,
                 file_name: JSON.stringify(metadata),

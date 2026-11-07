@@ -202,7 +202,7 @@ class VendorPortalController {
                 { expiresIn: config.jwt.expiresIn }
             );
 
-            sendSuccess(res, 'Vendor enlisted successfully! Welcome to CivilWorks partner network.', {
+            sendSuccess(res, 'Vendor enlisted successfully! Welcome to InfraMart partner network.', {
                 token,
                 vendor: {
                     id: vendor.id,
@@ -569,7 +569,7 @@ class VendorPortalController {
                 conversation_id: conversation.id,
                 sender_type: 'system',
                 sender_id: vendorId,
-                sender_name: 'CivilWorks System',
+                sender_name: 'InfraMart System',
                 message_type: 'system',
                 content: systemMsg
             });

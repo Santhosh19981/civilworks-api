@@ -342,7 +342,7 @@ class ChatRepository {
         const conversation_id = data.conversation_id;
         const sender_type = data.sender_type || 'system';
         const sender_id = data.sender_id !== undefined ? data.sender_id : null;
-        const sender_name = data.sender_name || 'CivilWorks System';
+        const sender_name = data.sender_name || 'InfraMart System';
         const message_type = data.message_type || 'system';
         const content = data.content !== undefined ? data.content : null;
         const file_url = data.file_url !== undefined ? data.file_url : (data.attachment_url || null);

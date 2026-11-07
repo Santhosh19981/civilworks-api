@@ -62,7 +62,7 @@ function uploadDir(sftp, conn, localDir, remoteDir) {
 }
 
 async function deploy() {
-  console.log('=== CivilWorks Deployment ===');
+  console.log('=== InfraMart Deployment ===');
   console.log(`Connecting to ${SERVER}...`);
 
   const conn = new Client();

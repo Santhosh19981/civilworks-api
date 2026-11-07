@@ -536,7 +536,7 @@ class OrderController {
             await chatRepository.saveMessage({
                 conversation_id: conversation.id,
                 sender_type: 'system',
-                sender_name: 'CivilWorks System',
+                sender_name: 'InfraMart System',
                 message_type: 'system',
                 content: `Customer added a new service: ${subcategory.name}. Vendor request sent.`
             });
@@ -633,7 +633,7 @@ class OrderController {
                 const savedMsg = await chatRepository.saveMessage({
                     conversation_id: conversation.id,
                     sender_type: 'system',
-                    sender_name: 'CivilWorks System',
+                    sender_name: 'InfraMart System',
                     message_type: 'system',
                     content: systemMsg
                 });

@@ -9,7 +9,7 @@ dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 
 const config = {
   app: {
-    name: process.env.APP_NAME || 'CivilWorks API',
+    name: process.env.APP_NAME || 'InfraMart API',
     env: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT, 10) || 5000,
     url: process.env.APP_URL || 'http://localhost:5000',

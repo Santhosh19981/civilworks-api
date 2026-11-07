@@ -11,7 +11,7 @@ const router = express.Router();
  */
 router.get('/health', (req, res) => {
     logger.info('Health check triggered');
-    return sendSuccess(res, 'CivilWorks API is healthy', {
+    return sendSuccess(res, 'InfraMart API is healthy', {
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         env: process.env.NODE_ENV,
