@@ -132,6 +132,7 @@ class SOPRepository {
             subtaskQuery += ` ORDER BY st.sequence_order ASC, st.id ASC`;
 
             const [subtasks] = await pool.execute(subtaskQuery, subtaskParams);
+            subtasks.forEach(st => this.normalizeSubtaskStatus(st));
 
             // Fetch proof images for each subtask
             for (const st of subtasks) {
@@ -145,6 +146,14 @@ class SOPRepository {
                 st.proof_images = proofs || [];
                 st.proof_image_url = (proofs && proofs.length > 0) ? proofs[proofs.length - 1].image_url : null;
             }
+
+            // Attach comment threads (empty until migration 014 has been run)
+            const commentsBySubtask = await this.getCommentsForSubtasks(subtasks.map(st => st.id), service.order_id);
+            for (const st of subtasks) {
+                st.comments = commentsBySubtask[st.id] || [];
+                st.comments_count = st.comments.filter(c => c.comment).length;
+            }
+            service.comments = await this.getServiceComments(service.id, service.order_id);
 
             service.subtasks = subtasks;
 
@@ -348,7 +357,30 @@ class SOPRepository {
         );
         subtask.proof_images = proofs || [];
         subtask.proof_image_url = (proofs && proofs.length > 0) ? proofs[proofs.length - 1].image_url : null;
-        return subtask;
+        return this.normalizeSubtaskStatus(subtask);
+    }
+
+    /**
+     * A subtask the vendor sent for approval is stored as in_progress with completed_at set
+     * (this works whether or not the status column has the 'approval_pending' value yet).
+     */
+    normalizeSubtaskStatus(st) {
+        if (st && st.status === 'in_progress' && st.completed_at) {
+            st.status = 'approval_pending';
+        }
+        return st;
+    }
+
+    async supportsApprovalStatus() {
+        if (this._approvalStatusSupported === undefined) {
+            try {
+                const [cols] = await pool.query("SHOW COLUMNS FROM order_service_subtasks LIKE 'status'");
+                this._approvalStatusSupported = !!(cols[0] && String(cols[0].Type).includes("'approval_pending'"));
+            } catch (err) {
+                return false;
+            }
+        }
+        return this._approvalStatusSupported;
     }
 
     /**
@@ -375,15 +407,28 @@ class SOPRepository {
             params.push(updateData.end_date);
         }
         if (updateData.status !== undefined) {
-            fields.push('status = ?');
-            params.push(updateData.status);
-            if (updateData.status === 'completed') {
+            if (updateData.status === 'approval_pending') {
+                // Sent for approval: completed_at marks it while the customer reviews
+                fields.push('status = ?');
+                params.push((await this.supportsApprovalStatus()) ? 'approval_pending' : 'in_progress');
                 fields.push('completed_at = NOW()');
+            } else {
+                fields.push('status = ?');
+                params.push(updateData.status);
+                fields.push(updateData.status === 'completed' ? 'completed_at = NOW()' : 'completed_at = NULL');
             }
         }
         if (updateData.sequence_order !== undefined) {
             fields.push('sequence_order = ?');
             params.push(updateData.sequence_order);
+        }
+        if (updateData.next_order_service_id !== undefined) {
+            fields.push('next_order_service_id = ?');
+            params.push(updateData.next_order_service_id);
+        }
+        if (updateData.next_vendor_id !== undefined) {
+            fields.push('next_vendor_id = ?');
+            params.push(updateData.next_vendor_id);
         }
 
         if (fields.length === 0) return;
@@ -402,6 +447,106 @@ class SOPRepository {
     }
 
     /**
+     * Add a Site Workflow comment (review decision or discussion) to a subtask or service.
+     */
+    async addComment({ order_id, order_service_id = null, subtask_id = null, author_type, author_id = null, author_name = null, kind = 'comment', comment = null }) {
+        try {
+            const [res] = await pool.execute(
+                `INSERT INTO sop_comments (order_id, order_service_id, subtask_id, author_type, author_id, author_name, kind, comment)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [order_id, order_service_id, subtask_id, author_type, author_id, author_name, kind, comment]
+            );
+            const [rows] = await pool.execute('SELECT * FROM sop_comments WHERE id = ?', [res.insertId]);
+            return rows[0];
+        } catch (err) {
+            if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+        }
+
+        // No sop_comments table yet: keep the comment as a hidden row in the project discussion
+        const [convs] = await pool.execute('SELECT id FROM project_conversations WHERE order_id = ? ORDER BY id ASC LIMIT 1', [order_id]);
+        if (convs.length === 0) return null;
+        const meta = JSON.stringify({
+            s: order_service_id ? Number(order_service_id) : null,
+            t: subtask_id ? Number(subtask_id) : null,
+            a: author_type,
+            i: author_id ? Number(author_id) : null,
+            n: author_name ? String(author_name).slice(0, 60) : null,
+            k: kind
+        });
+        const [res] = await pool.execute(
+            `INSERT INTO project_messages (conversation_id, sender_type, sender_id, sender_name, message_type, content, file_name, file_type)
+             VALUES (?, 'system', NULL, 'InfraMart System', 'system', ?, ?, 'sop_comment')`,
+            [convs[0].id, comment, meta]
+        );
+        return {
+            id: res.insertId, order_id, order_service_id, subtask_id, author_type, author_id,
+            author_name, kind, comment, created_at: new Date()
+        };
+    }
+
+    /** Comments kept in the project discussion while the sop_comments table does not exist. */
+    async getFallbackComments(orderId) {
+        if (!orderId) return [];
+        const [rows] = await pool.execute(
+            `SELECT pm.id, pm.content, pm.file_name, pm.created_at
+             FROM project_messages pm
+             JOIN project_conversations pc ON pc.id = pm.conversation_id
+             WHERE pc.order_id = ? AND pm.file_type = 'sop_comment'
+             ORDER BY pm.id ASC`,
+            [orderId]
+        );
+        const out = [];
+        for (const r of rows) {
+            let m;
+            try { m = JSON.parse(r.file_name || '{}'); } catch (e) { continue; }
+            out.push({
+                id: r.id, order_id: Number(orderId), order_service_id: m.s, subtask_id: m.t,
+                author_type: m.a, author_id: m.i, author_name: m.n, kind: m.k || 'comment',
+                comment: r.content, created_at: r.created_at
+            });
+        }
+        return out;
+    }
+
+    async getCommentsForSubtasks(subtaskIds, orderId = null) {
+        const map = {};
+        if (!subtaskIds || subtaskIds.length === 0) return map;
+        try {
+            const placeholders = subtaskIds.map(() => '?').join(',');
+            const [rows] = await pool.execute(
+                `SELECT * FROM sop_comments WHERE subtask_id IN (${placeholders}) ORDER BY id ASC`,
+                subtaskIds
+            );
+            for (const row of rows) {
+                (map[row.subtask_id] = map[row.subtask_id] || []).push(row);
+            }
+        } catch (err) {
+            if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+            const ids = subtaskIds.map(Number);
+            for (const row of await this.getFallbackComments(orderId)) {
+                if (row.subtask_id && ids.includes(Number(row.subtask_id))) {
+                    (map[row.subtask_id] = map[row.subtask_id] || []).push(row);
+                }
+            }
+        }
+        return map;
+    }
+
+    async getServiceComments(serviceId, orderId = null) {
+        try {
+            const [rows] = await pool.execute(
+                'SELECT * FROM sop_comments WHERE order_service_id = ? AND subtask_id IS NULL ORDER BY id ASC',
+                [serviceId]
+            );
+            return rows;
+        } catch (err) {
+            if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+            return (await this.getFallbackComments(orderId))
+                .filter(c => Number(c.order_service_id) === Number(serviceId) && !c.subtask_id);
+        }
+    }
+
+    /**
      * Delete subtask
      */
     async deleteSubtask(subtaskId) {
@@ -409,6 +554,11 @@ class SOPRepository {
         if (!subtask) return;
 
         await pool.execute(`DELETE FROM subtask_proof_images WHERE subtask_id = ?`, [subtaskId]);
+        try {
+            await pool.execute(`DELETE FROM sop_comments WHERE subtask_id = ?`, [subtaskId]);
+        } catch (err) {
+            if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+        }
         await pool.execute(`DELETE FROM order_service_subtasks WHERE id = ?`, [subtaskId]);
 
         await this.recalculateServiceProgress(subtask.order_service_id);

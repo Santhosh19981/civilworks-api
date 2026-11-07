@@ -1,6 +1,7 @@
 const chatRepository = require('../repositories/chat.repository');
 const orderRepository = require('../repositories/order.repository');
 const notificationRepository = require('../repositories/notification.repository');
+const sopRepository = require('../repositories/sop.repository');
 const { pool } = require('../config/db.config');
 const { sendSuccess } = require('../utils/response.helper');
 const { AppError } = require('../middlewares/error.middleware');
@@ -303,8 +304,38 @@ class ChatController {
             const vendorName = req.user.name || targetService.vendor_name || 'Vendor Partner';
             const serviceName = targetService.subcategory_name || targetService.service_name || 'Assigned Service';
 
+            // Site Workflow approval: the service waits for the customer to approve or request changes.
+            const [pendingRequests] = await pool.execute(
+                "SELECT id FROM service_completion_requests WHERE order_service_id = ? AND status = 'pending'",
+                [targetService.id]
+            );
+            if (pendingRequests.length > 0) {
+                // No data: the client only appends real chat messages from this response
+                return sendSuccess(res, "Your completion request is already waiting for the customer's approval", null);
+            }
+            const completionRequest = await sopRepository.createCompletionRequest(
+                targetService.id,
+                conversation.order_id,
+                vendorId,
+                req.body?.note || null
+            );
+            try {
+                await sopRepository.addComment({
+                    order_id: conversation.order_id,
+                    order_service_id: targetService.id,
+                    author_type: 'vendor',
+                    author_id: vendorId,
+                    author_name: vendorName,
+                    kind: 'approval_requested',
+                    comment: req.body?.note && String(req.body.note).trim() ? String(req.body.note).trim() : null
+                });
+            } catch (err) {
+                if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+            }
+
             const metadata = {
                 action: 'completion_request',
+                completion_request_id: completionRequest ? completionRequest.id : null,
                 service_id: targetService.id,
                 order_id: conversation.order_id,
                 vendor_id: vendorId,
@@ -357,8 +388,9 @@ class ChatController {
                     user_id: conversation.customer_user_id,
                     target_type: 'customer',
                     order_id: conversation.order_id,
-                    title: `Work Completion Request from ${vendorName}`,
-                    message: `${vendorName} has finished work for ${serviceName}. Please open chat and confirm completion.`,
+                    service_id: targetService.id,
+                    title: `Approval needed: ${serviceName}`,
+                    message: `${vendorName} has finished work for ${serviceName}. Open Site Workflow to approve it or request changes.`,
                     type: 'completion_request'
                 });
             }
@@ -415,6 +447,12 @@ class ChatController {
             await orderRepository.updateOrderService(targetService.id, {
                 service_status: 'completed'
             });
+
+            // Close any Site Workflow approval request still waiting on this service
+            await pool.execute(
+                "UPDATE service_completion_requests SET status = 'approved', reviewed_by_user_id = ?, reviewed_at = NOW(), updated_at = NOW() WHERE order_service_id = ? AND status = 'pending'",
+                [req.user.id, targetService.id]
+            );
 
             const vendorName = targetService.vendor_name || 'Vendor Partner';
             const serviceName = targetService.subcategory_name || targetService.service_name || 'Service';

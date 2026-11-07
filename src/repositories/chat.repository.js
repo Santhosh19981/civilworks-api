@@ -26,28 +26,28 @@ class ChatRepository {
                 (
                     SELECT pm.content 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                     ORDER BY pm.created_at DESC 
                     LIMIT 1
                 ) as last_message,
                 (
                     SELECT pm.message_type 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                     ORDER BY pm.created_at DESC 
                     LIMIT 1
                 ) as last_message_type,
                 (
                     SELECT pm.sender_name 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                     ORDER BY pm.created_at DESC 
                     LIMIT 1
                 ) as last_sender_name,
                 (
                     SELECT COUNT(*) 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                       AND pm.sender_type != 'customer'
                       AND pm.created_at > COALESCE((
                           SELECT cp.last_read_at 
@@ -94,7 +94,7 @@ class ChatRepository {
                     (
                         SELECT pm.created_at 
                         FROM project_messages pm 
-                        WHERE pm.conversation_id = pc.id 
+                        WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                           AND (cp_v.completed_at IS NULL OR pm.created_at <= cp_v.completed_at)
                         ORDER BY pm.created_at DESC 
                         LIMIT 1
@@ -116,7 +116,7 @@ class ChatRepository {
                 (
                     SELECT pm.content 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                       AND (cp_v.completed_at IS NULL OR pm.created_at <= cp_v.completed_at)
                     ORDER BY pm.created_at DESC 
                     LIMIT 1
@@ -124,7 +124,7 @@ class ChatRepository {
                 (
                     SELECT pm.message_type 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                       AND (cp_v.completed_at IS NULL OR pm.created_at <= cp_v.completed_at)
                     ORDER BY pm.created_at DESC 
                     LIMIT 1
@@ -132,7 +132,7 @@ class ChatRepository {
                 (
                     SELECT COUNT(*) 
                     FROM project_messages pm 
-                    WHERE pm.conversation_id = pc.id 
+                    WHERE pm.conversation_id = pc.id AND (pm.file_type IS NULL OR pm.file_type <> 'sop_comment') 
                       AND (pm.sender_type != 'vendor' OR pm.sender_id != ?)
                       AND (cp_v.completed_at IS NULL OR pm.created_at <= cp_v.completed_at)
                       AND pm.created_at > COALESCE(cp_v.last_read_at, '1970-01-01')
@@ -323,6 +323,7 @@ class ChatRepository {
         let query = `
             SELECT * FROM project_messages 
             WHERE conversation_id = ? 
+              AND (file_type IS NULL OR file_type <> 'sop_comment')
         `;
         const params = [conversationId];
 

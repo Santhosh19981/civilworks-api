@@ -64,6 +64,8 @@ router.put('/subtasks/:subtaskId', sopController.updateSubtask);
 router.delete('/subtasks/:subtaskId', sopController.deleteSubtask);
 router.post('/subtasks/:subtaskId/complete', sopController.completeSubtask);
 router.post('/subtasks/:subtaskId/upload-proof', upload.single('image'), sopController.uploadProof);
+router.post('/subtasks/:subtaskId/review', sopController.reviewSubtask);
+router.post('/subtasks/:subtaskId/comments', sopController.addSubtaskComment);
 
 // Completion request response route
 router.post('/completion-requests/:requestId/respond', sopController.respondCompletionRequest);
